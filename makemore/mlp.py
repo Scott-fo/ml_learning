@@ -61,13 +61,16 @@ if __name__ == "__main__":
 
     g = torch.Generator().manual_seed(2147463647)
 
-    C = torch.randn((27, 10), generator=g).cuda()
+    C = torch.empty((27, 10)).cuda()
+    torch.nn.init.normal_(C, mean=0, std=0.1)
 
-    W1 = torch.randn((30, 200), generator=g).cuda()
-    b1 = torch.randn(200, generator=g).cuda()
+    W1 = torch.empty((30, 200)).cuda()
+    torch.nn.init.normal_(W1, mean=0, std=0.1)
+    b1 = torch.zeros(200).cuda()
 
-    W2 = torch.randn((200, 27), generator=g).cuda()
-    b2 = torch.randn(27, generator=g).cuda()
+    W2 = torch.empty((200, 27)).cuda()
+    torch.nn.init.normal_(W2, mean=0, std=0.1)
+    b2 = torch.zeros(27).cuda()
 
     parameters = [C, W1, b1, W2, b2]
 
@@ -80,6 +83,13 @@ if __name__ == "__main__":
     lri = []
     lossi = []
     stepi = []
+
+    emb = C[Xdev]
+    h = torch.tanh(emb.view(-1, 30) @ W1 + b1)
+    logits = h @ W2 + b2
+    loss = F.cross_entropy(logits, Ydev).cuda()
+
+    print(f"starting loss: {loss.item()}")
 
     for i in range(200000):
         if i % 100 == 0:
