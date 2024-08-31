@@ -81,8 +81,10 @@ if __name__ == "__main__":
     lossi = []
     stepi = []
 
-    for i in range(30000):
-        print(i)
+    for i in range(200000):
+        if i % 100 == 0:
+            print(i)
+
         ix = torch.randint(0, Xtr.shape[0], (32, )).cuda()
         # Forward pass
         emb = C[Xtr[ix]]
@@ -97,7 +99,7 @@ if __name__ == "__main__":
         loss.backward()
 
         # Update
-        lr = 0.1
+        lr = 0.1 if i < 100000 else 0.01
         for p in parameters:
             p.data += -lr * p.grad
 
@@ -105,7 +107,7 @@ if __name__ == "__main__":
         # We can plot lri against lossi to determine what the best learning rate
         # is
         # lri.append(lre[i])
-        lossi.append(loss.item())
+        lossi.append(loss.log10().item())
         stepi.append(i)
 
     emb = C[Xdev]
@@ -113,4 +115,4 @@ if __name__ == "__main__":
     logits = h @ W2 + b2
     loss = F.cross_entropy(logits, Ydev).cuda()
 
-    print(loss)
+    print(loss.item())
