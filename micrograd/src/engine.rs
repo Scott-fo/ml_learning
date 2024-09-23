@@ -1,3 +1,4 @@
+use core::panic;
 use std::{
     cell::RefCell,
     collections::HashSet,
@@ -6,60 +7,78 @@ use std::{
     rc::Rc,
 };
 
-use ordered_float::OrderedFloat;
-
-#[derive(Clone, Eq, PartialEq)]
-enum Op {
+#[derive(Clone)]
+pub enum Op {
     Add,
     Mul,
     Tanh,
 }
 
-#[derive(Eq, PartialEq, Clone)]
+#[derive(Clone)]
 pub struct Tensor {
-    pub data: OrderedFloat<f64>,
-
-    grad: RefCell<OrderedFloat<f64>>,
-    op: Option<Op>,
-    prev: HashSet<Rc<Tensor>>,
-}
-
-impl std::hash::Hash for Tensor {
-    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-        self.data.hash(state);
-        for tensor in &self.prev {
-            std::ptr::hash(Rc::as_ptr(tensor), state);
-        }
-    }
+    pub data: f64,
+    pub grad: RefCell<f64>,
+    pub op: Option<Op>,
+    pub prev: Vec<Rc<Tensor>>,
 }
 
 impl Display for Tensor {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "Tensor(data={})", self.data)
+        write!(f, "Tensor(data={}, grad={})", self.data, self.grad.borrow())
     }
 }
 
 impl Tensor {
     pub fn new(data: f64) -> Self {
         Self {
-            data: OrderedFloat(data),
-            grad: RefCell::new(OrderedFloat(0.0)),
-            prev: HashSet::new(),
+            data,
+            grad: RefCell::new(0.0),
+            prev: vec![],
             op: None,
+        }
+    }
+
+    pub fn backward(self: &Self) {
+        if let Some(op) = &self.op {
+            let current_grad = *self.grad.borrow();
+
+            match op {
+                Op::Add => {
+                    if self.prev.len() != 2 {
+                        panic!("only handling length of 2 for now");
+                    }
+
+                    *self.prev[0].grad.borrow_mut() = current_grad * 1.0;
+                    *self.prev[1].grad.borrow_mut() = current_grad * 1.0;
+                }
+                Op::Mul => {
+                    if self.prev.len() != 2 {
+                        panic!("only handling length of 2 for now");
+                    }
+
+                    *self.prev[0].grad.borrow_mut() = self.prev[1].data * current_grad;
+                    *self.prev[1].grad.borrow_mut() = self.prev[0].data * current_grad;
+                }
+                Op::Tanh => {
+                    if self.prev.len() != 1 {
+                        panic!("expected tanh to only have 1 prev");
+                    }
+
+                    let g = (1.0 - (self.data * self.data)) * current_grad;
+                    *self.prev[0].grad.borrow_mut() = g;
+                }
+            }
         }
     }
 
     pub fn tanh(self: Self) -> Self {
         let th = self.data.tanh();
 
-        let mut prev = HashSet::new();
-        prev.insert(Rc::new(self));
-
         Self {
-            data: OrderedFloat(th),
-            grad: RefCell::new(OrderedFloat(0.0)),
+            data: th,
+            grad: RefCell::new(0.0),
             op: Some(Op::Tanh),
-            prev,
+            prev: vec![Rc::new(self)],
         }
     }
 
@@ -81,15 +100,11 @@ impl Add for Tensor {
     fn add(self, rhs: Self) -> Self::Output {
         let sum = self.data + rhs.data;
 
-        let mut prev = HashSet::new();
-        prev.insert(Rc::new(self));
-        prev.insert(Rc::new(rhs));
-
         Self {
             data: sum,
-            grad: RefCell::new(OrderedFloat(0.0)),
+            grad: RefCell::new(0.0),
             op: Some(Op::Add),
-            prev,
+            prev: vec![Rc::new(self), Rc::new(rhs)],
         }
     }
 }
@@ -100,15 +115,11 @@ impl Mul for Tensor {
     fn mul(self, rhs: Self) -> Self::Output {
         let prod = self.data * rhs.data;
 
-        let mut c = HashSet::new();
-        c.insert(Rc::new(self));
-        c.insert(Rc::new(rhs));
-
         Self {
             data: prod,
-            grad: RefCell::new(OrderedFloat(0.0)),
+            grad: RefCell::new(0.0),
             op: Some(Op::Mul),
-            prev: c,
+            prev: vec![Rc::new(self), Rc::new(rhs)],
         }
     }
 }
