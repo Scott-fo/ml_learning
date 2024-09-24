@@ -1,18 +1,55 @@
-use std::{cell::RefCell, collections::HashSet, fmt::Display, rc::Rc};
+use std::{
+    cell::RefCell,
+    collections::HashSet,
+    fmt::Display,
+    ops::{Add, Mul},
+    rc::Rc,
+};
 
 #[derive(Clone)]
-pub enum Op {
-    Add(Rc<Tensor>, Rc<Tensor>),
-    Mul(Rc<Tensor>, Rc<Tensor>),
-    Tanh(Rc<Tensor>),
+enum Op {
+    Add(Tensor, Tensor),
+    Mul(Tensor, Tensor),
+    Tanh(Tensor),
 }
 
 #[derive(Clone)]
-pub struct Tensor {
-    pub label: String,
-    pub data: f64,
-    pub grad: RefCell<f64>,
-    pub op: Option<Op>,
+pub struct Value {
+    label: String,
+    data: f64,
+    grad: RefCell<f64>,
+    op: Option<Op>,
+}
+
+#[derive(Clone)]
+pub struct Tensor(Rc<Value>);
+
+impl Add for Tensor {
+    type Output = Self;
+
+    fn add(self, rhs: Self) -> Self::Output {
+        let label = format!("{}+{}", self.0.label, rhs.0.label);
+
+        Tensor::with_op(
+            self.0.data + rhs.0.data,
+            Some(Op::Add(self.clone(), rhs.clone())),
+            label,
+        )
+    }
+}
+
+impl Mul for Tensor {
+    type Output = Self;
+
+    fn mul(self, rhs: Self) -> Self::Output {
+        let label = format!("{}*{}", self.0.label, rhs.0.label);
+
+        Tensor::with_op(
+            self.0.data * rhs.0.data,
+            Some(Op::Mul(self.clone(), rhs.clone())),
+            label,
+        )
+    }
 }
 
 impl Display for Tensor {
@@ -20,87 +57,90 @@ impl Display for Tensor {
         write!(
             f,
             "Tensor(label={}, data={}, grad={})",
-            self.label,
-            self.data,
-            self.grad.borrow()
+            self.0.label,
+            self.0.data,
+            self.0.grad.borrow()
         )
     }
 }
 
 impl Tensor {
-    pub fn new(data: f64, label: &str) -> Rc<Self> {
-        Rc::new(Self {
+    pub fn new(data: f64, label: &str) -> Tensor {
+        Tensor(Rc::new(Value {
             label: label.to_string(),
             data,
             grad: RefCell::new(0.0),
             op: None,
-        })
+        }))
     }
 
-    pub fn backward(self: &Rc<Self>) {
-        let mut topo: Vec<Rc<Tensor>> = Vec::new();
+    fn with_op(data: f64, op: Option<Op>, label: String) -> Tensor {
+        Tensor(Rc::new(Value {
+            data,
+            op,
+            label: label.to_string(),
+            grad: RefCell::new(0.0),
+        }))
+    }
+
+    pub fn backward(self: &Self) {
+        let mut topo: Vec<Tensor> = Vec::new();
         let mut visited: HashSet<*const Tensor> = HashSet::new();
 
-        fn build_topo(
-            v: &Rc<Tensor>,
-            topo: &mut Vec<Rc<Tensor>>,
-            visited: &mut HashSet<*const Tensor>,
-        ) {
-            if !visited.contains(&(Rc::as_ptr(v) as *const Tensor)) {
-                visited.insert(Rc::as_ptr(v) as *const Tensor);
-                if let Some(op) = &v.op {
+        fn build_topo(v: &Tensor, topo: &mut Vec<Tensor>, visited: &mut HashSet<*const Tensor>) {
+            let ptr = v as *const Tensor;
+
+            if !visited.contains(&ptr) {
+                visited.insert(ptr);
+                if let Some(op) = &v.0.op {
                     match op {
                         Op::Add(t1, t2) | Op::Mul(t1, t2) => {
-                            build_topo(t1, topo, visited);
-                            build_topo(t2, topo, visited);
+                            build_topo(&t1, topo, visited);
+                            build_topo(&t2, topo, visited);
                         }
-                        Op::Tanh(t) => build_topo(t, topo, visited),
+                        Op::Tanh(t) => build_topo(&t, topo, visited),
                     }
                 }
-                topo.push(Rc::clone(v));
+                topo.push(v.clone());
             }
         }
 
         build_topo(self, &mut topo, &mut visited);
 
-        *self.grad.borrow_mut() = 1.0;
+        *self.0.grad.borrow_mut() = 1.0;
 
         for v in topo.iter().rev() {
-            if let Some(op) = &v.op {
-                let current_grad = *v.grad.borrow();
+            if let Some(op) = &v.0.op {
+                let current_grad = *v.0.grad.borrow();
+
                 match op {
                     Op::Add(t1, t2) => {
-                        *t1.grad.borrow_mut() += current_grad;
-                        *t2.grad.borrow_mut() += current_grad;
+                        *t1.0.grad.borrow_mut() += current_grad;
+                        *t2.0.grad.borrow_mut() += current_grad;
                     }
                     Op::Mul(t1, t2) => {
-                        *t1.grad.borrow_mut() += t2.data * current_grad;
-                        *t2.grad.borrow_mut() += t1.data * current_grad;
+                        *t1.0.grad.borrow_mut() += t2.0.data * current_grad;
+                        *t2.0.grad.borrow_mut() += t1.0.data * current_grad;
                     }
                     Op::Tanh(t) => {
-                        let g = (1.0 - (v.data * v.data)) * current_grad;
-                        *t.grad.borrow_mut() += g;
+                        let g = (1.0 - (v.0.data * v.0.data)) * current_grad;
+                        *t.0.grad.borrow_mut() += g;
                     }
                 }
             }
         }
     }
 
-    pub fn tanh(self: &Rc<Self>) -> Rc<Tensor> {
-        let label = format!("tanh({})", self.label);
-
-        Rc::new(Tensor {
-            label,
-            data: self.data.tanh(),
-            grad: RefCell::new(0.0),
-            op: Some(Op::Tanh(Rc::clone(self))),
-        })
+    pub fn tanh(self: &Self) -> Tensor {
+        let label = format!("tanh({})", self.0.label);
+        Tensor::with_op(self.0.data.tanh(), Some(Op::Tanh(self.clone())), label)
     }
 
-    pub fn print_graph(self: &Rc<Self>, depth: usize) {
+    pub fn print_graph(self: &Self, depth: usize) {
         let indent = " ".repeat(depth * 2);
         println!("{}{}", indent, self);
-        if let Some(op) = &self.op {
+
+        if let Some(op) = &self.0.op {
             match op {
                 Op::Add(t1, t2) | Op::Mul(t1, t2) => {
                     Self::print_graph(t1, depth + 1);
@@ -110,26 +150,4 @@ impl Tensor {
             }
         }
     }
-}
-
-pub fn add(t1: &Rc<Tensor>, t2: &Rc<Tensor>) -> Rc<Tensor> {
-    let label = format!("{}+{}", t1.label, t2.label);
-
-    Rc::new(Tensor {
-        label,
-        data: t1.data + t2.data,
-        grad: RefCell::new(0.0),
-        op: Some(Op::Add(Rc::clone(t1), Rc::clone(t2))),
-    })
-}
-
-pub fn mul(t1: &Rc<Tensor>, t2: &Rc<Tensor>) -> Rc<Tensor> {
-    let label = format!("{}*{}", t1.label, t2.label);
-
-    Rc::new(Tensor {
-        label,
-        data: t1.data * t2.data,
-        grad: RefCell::new(0.0),
-        op: Some(Op::Mul(Rc::clone(t1), Rc::clone(t2))),
-    })
 }
