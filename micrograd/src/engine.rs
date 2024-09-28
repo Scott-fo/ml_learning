@@ -2,7 +2,7 @@ use std::{
     cell::RefCell,
     collections::HashSet,
     fmt::Display,
-    ops::{Add, Mul},
+    ops::{Add, Div, Mul, Neg, Sub},
     rc::Rc,
 };
 
@@ -12,6 +12,7 @@ enum Op {
     Mul(Tensor, Tensor),
     Tanh(Tensor),
     Exp(Tensor),
+    Pow(Tensor, f64),
 }
 
 #[derive(Clone)]
@@ -97,6 +98,62 @@ impl Mul<f64> for Tensor {
     }
 }
 
+impl Div for Tensor {
+    type Output = Self;
+
+    fn div(self, rhs: Self) -> Self::Output {
+        self * rhs.powi(-1)
+    }
+}
+
+impl Div<Tensor> for f64 {
+    type Output = Tensor;
+
+    fn div(self, rhs: Tensor) -> Self::Output {
+        self * rhs.powi(-1)
+    }
+}
+
+impl Div<f64> for Tensor {
+    type Output = Self;
+
+    fn div(self, rhs: f64) -> Self::Output {
+        self * rhs.powi(-1)
+    }
+}
+
+impl Neg for Tensor {
+    type Output = Self;
+
+    fn neg(self) -> Self::Output {
+        self * -1.0
+    }
+}
+
+impl Sub for Tensor {
+    type Output = Self;
+
+    fn sub(self, rhs: Self) -> Self::Output {
+        self + (-rhs)
+    }
+}
+
+impl Sub<Tensor> for f64 {
+    type Output = Tensor;
+
+    fn sub(self, rhs: Tensor) -> Self::Output {
+        self + (-rhs)
+    }
+}
+
+impl Sub<f64> for Tensor {
+    type Output = Self;
+
+    fn sub(self, rhs: f64) -> Self::Output {
+        self + (-rhs)
+    }
+}
+
 impl Display for Tensor {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
@@ -144,6 +201,7 @@ impl Tensor {
                             build_topo(&t2, topo, visited);
                         }
                         Op::Tanh(t) | Op::Exp(t) => build_topo(&t, topo, visited),
+                        Op::Pow(t, _f) => build_topo(&t, topo, visited),
                     }
                 }
                 topo.push(v.clone());
@@ -174,6 +232,9 @@ impl Tensor {
                     Op::Exp(t) => {
                         *t.0.grad.borrow_mut() += v.0.data * current_grad;
                     }
+                    Op::Pow(t, f) => {
+                        *t.0.grad.borrow_mut() += f * t.0.data.powf(f - 1.0) * current_grad;
+                    }
                 }
             }
         }
@@ -189,6 +250,20 @@ impl Tensor {
         Self::with_op(self.0.data.exp(), Some(Op::Exp(self.clone())), label)
     }
 
+    pub fn powf(self: &Self, f: f64) -> Self {
+        let label = format!("{}^{}", self.0.label, f);
+        Self::with_op(self.0.data.powf(f), Some(Op::Pow(self.clone(), f)), label)
+    }
+
+    pub fn powi(self: &Self, i: i32) -> Self {
+        let label = format!("{}^{}", self.0.label, i);
+        Self::with_op(
+            self.0.data.powi(i),
+            Some(Op::Pow(self.clone(), i.into())),
+            label,
+        )
+    }
+
     pub fn print_graph(self: &Self, depth: usize) {
         let indent = " ".repeat(depth * 2);
         println!("{}{}", indent, self);
@@ -200,6 +275,7 @@ impl Tensor {
                     Self::print_graph(t2, depth + 1);
                 }
                 Op::Tanh(t) | Op::Exp(t) => Self::print_graph(t, depth + 1),
+                Op::Pow(t, _f) => Self::print_graph(t, depth + 1),
             }
         }
     }

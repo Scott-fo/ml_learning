@@ -14,19 +14,13 @@ fn main() {
 
         let n = x1w1x2w2 + b;
         n.tanh()
+
+        // Doesn't work, I assume because of the clone
+        // let e = (2.0 * n).exp();
+        // (e.clone() - 1.0) / (e.clone() + 1.0)
     };
 
-    /*
     let output = compute();
     output.backward();
     output.print_graph(0);
-    */
-
-    let a = Tensor::new(2.0, "a");
-    let b = 2.0;
-
-    println!("{}", b * a.clone());
-    println!("{}", a.clone() * b);
-    println!("{}", a.clone() + b);
-    println!("{}", b + a.clone());
 }
