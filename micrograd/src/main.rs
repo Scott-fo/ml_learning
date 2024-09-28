@@ -16,7 +16,17 @@ fn main() {
         n.tanh()
     };
 
+    /*
     let output = compute();
     output.backward();
     output.print_graph(0);
+    */
+
+    let a = Tensor::new(2.0, "a");
+    let b = 2.0;
+
+    println!("{}", b * a.clone());
+    println!("{}", a.clone() * b);
+    println!("{}", a.clone() + b);
+    println!("{}", b + a.clone());
 }
