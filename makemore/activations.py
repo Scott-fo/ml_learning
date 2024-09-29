@@ -16,13 +16,13 @@ def sample():
         context = [0] * block_size
         while True:
             # Forward pass neural net
-            emb = C[torch.tensor([context])]
-            h = torch.tanh(emb.view(1, -1) @ W1 + b1)
+            emb = C[torch.tensor([context]).cuda()]
+            h = torch.tanh(emb.view(1, -1) @ W1 + b1).cuda()
             logits = h @ W2 + b2
-            probs = F.softmax(logits, dim=1)
+            probs = F.softmax(logits, dim=1).cuda()
 
             # Sample from distribution
-            ix = torch.multinomial(probs, num_samples=1).item()
+            ix = torch.multinomial(probs, num_samples=1).cuda().item()
 
             # Shift context window
             context = context[1:] + [ix]
@@ -33,7 +33,7 @@ def sample():
 
 
 @torch.no_grad()
-def split_loss(split):
+def split_loss(split, bnmean, bnstd):
     x, y = {
         'train': (Xtr, Ytr),
         'val': (Xdev, Ydev),
@@ -41,11 +41,16 @@ def split_loss(split):
     }[split]
     emb = C[x]  # (M. block_size, n_embd)
     # concat into (N, block_size * n_embed)
-    embcat = emb.view(emb.shape[0], -1)
-    h = torch.tanh(embcat @ W1 + b1)  # (N, n_hidden)
+    embcat = emb.view(emb.shape[0], -1).cuda()
+    hpreact = embcat @ W1 + b1
+
+    # Batch Normalisation
+    hpreact = bngain * (hpreact - bnmean) / bnstd + bnbias
+
+    h = torch.tanh(hpreact)  # (N, n_hidden)
     logits = h @ W2 + b2  # (N, vocab_size)
-    loss = F.cross_entropy(logits, y)
-    print(split, loss.item())
+    loss = F.cross_entropy(logits, y).cuda()
+    print(split, loss.cuda().item())
 
 
 def build_dataset(words):
@@ -86,29 +91,47 @@ if __name__ == "__main__":
     Xte, Yte = build_dataset(words[n2:])
 
     g = torch.Generator().manual_seed(2147463647)
-    C = torch.randn((vocab_size, n_embd), generator=g)
-    W1 = torch.randn((n_embd * block_size, n_hidden), generator=g)
-    b1 = torch.randn(n_hidden, generator=g)
-    W2 = torch.randn((n_hidden, vocab_size), generator=g)
-    b2 = torch.randn(vocab_size, generator=g)
+    C = torch.randn((vocab_size, n_embd), generator=g).cuda()
+    W1 = torch.randn((n_embd * block_size, n_hidden), generator=g).cuda() * 0.2
+    W2 = torch.randn((n_hidden, vocab_size), generator=g).cuda() * \
+        0.01  # Don't want to set this to exactly 0
+    b2 = torch.randn(vocab_size, generator=g).cuda() * 0
 
-    parameters = [C, W1, b1, W2, b2]
+    bngain = torch.ones((1, n_hidden)).cuda()
+    bnbias = torch.zeros((1, n_hidden)).cuda()
+
+    bnmean_running = torch.zeros((1, n_hidden)).cuda()
+    bnstd_running = torch.ones((1, n_hidden)).cuda()
+
+    parameters = [C, W1, W2, b2, bngain, bnbias]
     for p in parameters:
         p.requires_grad = True
 
     for i in range(max_steps):
 
         # minibatch construct
-        ix = torch.randint(0, Xtr.shape[0], (batch_size, ), generator=g)
+        ix = torch.randint(0, Xtr.shape[0], (batch_size, ), generator=g).cuda()
         Xb, Yb = Xtr[ix], Ytr[ix]  # Batch X, Y
 
         # forward pass
         emb = C[Xb]  # Embed characters into vectors
-        embcat = emb.view(emb.shape[0], -1)  # Concatenate the vectors
-        hpreact = embcat @ W1 + b1  # Hidden layer pre-activation
-        h = torch.tanh(hpreact)  # Hidden layer
+        embcat = emb.view(emb.shape[0], -1).cuda()  # Concatenate the vectors
+        hpreact = embcat @ W1
+
+        bnmeani = hpreact.mean(0, keepdim=True).cuda()
+        bnstdi = hpreact.std(0, keepdim=True).cuda()
+
+        # Batch Normalisation
+        hpreact = bngain * (hpreact - bnmeani) / \
+            bnstdi + bnbias
+
+        with torch.no_grad():
+            bnmean_running = 0.999 * bnmean_running + 0.001 * bnmeani
+            bnstd_running = 0.999 * bnstd_running + 0.001 * bnstdi
+
+        h = torch.tanh(hpreact).cuda()  # Hidden layer
         logits = h @ W2 + b2  # Output layer
-        loss = F.cross_entropy(logits, Yb)  # Loss function
+        loss = F.cross_entropy(logits, Yb).cuda()  # Loss function
 
         # backward pass
         for p in parameters:
@@ -125,5 +148,5 @@ if __name__ == "__main__":
             print(f'{i:7d}/{max_steps:7d}: {loss.item():.4f}')
         lossi.append(loss.log10().item())
 
-    split_loss('train')
-    split_loss('val')
+    split_loss('train', bnmean_running, bnstd_running)
+    split_loss('val', bnmean_running, bnstd_running)
