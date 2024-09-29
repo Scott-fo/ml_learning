@@ -17,7 +17,7 @@ def sample():
         while True:
             # Forward pass neural net
             emb = C[torch.tensor([context]).cuda()]
-            h = torch.tanh(emb.view(1, -1) @ W1 + b1).cuda()
+            h = torch.tanh(emb.view(1, -1) @ W1).cuda()
             logits = h @ W2 + b2
             probs = F.softmax(logits, dim=1).cuda()
 
@@ -42,7 +42,7 @@ def split_loss(split, bnmean, bnstd):
     emb = C[x]  # (M. block_size, n_embd)
     # concat into (N, block_size * n_embed)
     embcat = emb.view(emb.shape[0], -1).cuda()
-    hpreact = embcat @ W1 + b1
+    hpreact = embcat @ W1
 
     # Batch Normalisation
     hpreact = bngain * (hpreact - bnmean) / bnstd + bnbias
